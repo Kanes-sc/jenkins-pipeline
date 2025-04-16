@@ -1,0 +1,76 @@
+pipeline {
+  agent any
+
+  environment {
+    IMAGE_NAME = 'your-registry/mini-app:latest'
+  }
+
+  tools {
+    nodejs 'NodeJS18'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        git 'https://your-repo-url'
+      }
+    }
+
+    stage('Code Quality (SonarQube)') {
+      steps {
+        withSonarQubeEnv('SonarQube') {
+          sh 'sonar-scanner'
+        }
+      }
+    }
+
+    stage('Unit Test') {
+      steps {
+        sh 'yarn install'
+        sh 'yarn test'
+      }
+    }
+    stage('Build Docker Image') {
+      steps {
+        script {
+          docker.build("${IMAGE_NAME}")
+        }
+      }
+    }
+
+    stage('Push to Registry') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'dockerhub-creds',
+          usernameVariable: 'USERNAME',
+          passwordVariable: 'PASSWORD'
+        )]) {
+          sh '''
+            echo $PASSWORD | docker login -u $USERNAME --password-stdin
+            docker push $IMAGE_NAME
+          '''
+        }
+      }
+    }
+    stage('Deploy to ROSA') {
+      steps {
+        withCredentials([string(
+          credentialsId: 'ocp-token',
+          variable: 'TOKEN'
+        )]) {
+          sh '''
+            oc login --token=$TOKEN --server=https://api.your-rosa-cluster:6443
+            oc project your-project
+            oc apply -f k8s/deployment.yaml
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      cleanWs()
+    }
+  }
+}
